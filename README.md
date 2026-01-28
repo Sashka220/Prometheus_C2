@@ -4,6 +4,8 @@ Minimal red team framework for authorized security operations. Lightweight, modu
 
 Written in Python and Bash, using LoTL PowerShell stagers and shells.
 
+![Prometheus C2 Web Interface](https://raw.githubusercontent.com/Sashka220/Prometheus_C2/main/images/Screenshot_20260128_213909_Chrome.jpg)
+
 ---
 
 ## Core Features
